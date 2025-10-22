@@ -1,5 +1,9 @@
-# SEUBOT Backend (WPPConnect, multiusuário)
-- Multiusuário por sessionId
-- Envio/recebimento de mensagens
-- SSE /messages/:sessionId/stream
-- Rotas: start, status, disconnect, send text
+# SEUBOT (WPPConnect – Local)
+Backend Node.js para Base44/Render.
+Rotas:
+POST /api/sessions/:sessionId/start
+GET  /api/sessions/:sessionId/status
+GET  /api/sessions/:sessionId/qr
+DELETE /api/sessions/:sessionId
+POST /api/messages/text
+GET  /api/messages/:sessionId/stream
