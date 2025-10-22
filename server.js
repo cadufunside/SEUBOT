@@ -1,7 +1,7 @@
 
 const express = require('express');
 const cors = require('cors');
-const WPPConnect = require('wppconnect');
+const WPPConnect = require('@wppconnect-team/wppconnect');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
