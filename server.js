@@ -1,39 +1,58 @@
 import express from "express";
 import cors from "cors";
-import { create, fetch } from "@wppconnect-team/wppconnect";
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
 
 const app = express();
 app.use(express.json());
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-  })
+app.use(cors({ origin: "*", methods: ["GET", "POST", "DELETE", "OPTIONS"] }));
+
+let sessions = {};
+
+app.get("/", (req, res) =>
+  res.json({ name: "SEUBOT Baileys Connector", ok: true, version: "1.0.0" })
 );
 
-// health check
-app.get("/", (req, res) => {
-  res.json({ name: "SEUBOT WPPConnect Connector", ok: true, version: "1.0.0" });
+app.post("/api/sessions/:sessionId/start", async (req, res) => {
+  const { sessionId } = req.params;
+  if (sessions[sessionId]) return res.json({ ok: true, message: "Sessão já ativa" });
+
+  const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${sessionId}`);
+  const sock = makeWASocket({ auth: state, printQRInTerminal: true });
+
+  sock.ev.on("creds.update", saveCreds);
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) console.log(`QR ${sessionId}: ${qr.substring(0, 40)}...`);
+    if (connection === "close") {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) sessions[sessionId] = null;
+    } else if (connection === "open") {
+      sessions[sessionId] = sock;
+      console.log(`✅ Conectado: ${sessionId}`);
+    }
+  });
+
+  sessions[sessionId] = sock;
+  res.json({ ok: true, message: "Sessão iniciada. Veja o QR no log do Render.", sessionId });
 });
 
-app.get("/healthz", (req, res) => res.json({ ok: true }));
+app.get("/api/sessions/:sessionId/status", (req, res) => {
+  const { sessionId } = req.params;
+  const active = !!sessions[sessionId];
+  res.json({ ok: active, status: active ? "CONNECTED" : "DISCONNECTED" });
+});
 
-// cria sessão e gera QR Code
-app.post("/api/sessions/:sessionId/start", async (req, res) => {
-  const sessionId = req.params.sessionId;
-  console.log("Iniciando sessão:", sessionId);
+app.delete("/api/sessions/:sessionId", (req, res) => {
+  const { sessionId } = req.params;
+  if (sessions[sessionId]) {
+    sessions[sessionId].end();
+    delete sessions[sessionId];
+  }
+  res.json({ ok: true, message: "Sessão encerrada" });
+});
 
-  try {
-    const client = await create({
-      session: sessionId,
-      catchQR: (base64Qr) => {
-        console.log("QR recebido:", base64Qr.substring(0, 40) + "...");
-      },
-      statusFind: (status) => console.log("Status:", status),
-    });
-
-    return res.json({
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 SEUBOT rodando na porta ${PORT}`));
       ok: true,
       message: "Sessão iniciada com sucesso",
       sessionId,
