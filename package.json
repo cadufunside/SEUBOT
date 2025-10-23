@@ -1,7 +1,7 @@
 {
   "name": "seubot",
   "version": "1.0.0",
-  "type": "module",
+  "type": "commonjs",
   "scripts": { "start": "node server.js" },
   "dependencies": {
     "@wppconnect-team/wppconnect": "^1.30.1",
