@@ -1,88 +1,106 @@
 import express from "express";
 import cors from "cors";
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason
+} from "@whiskeysockets/baileys";
 
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: "*", methods: ["GET", "POST", "DELETE", "OPTIONS"] }));
 
-let sessions = {};
+// memória simples: socket por sessão + último QR
+const sessions = new Map();         // sessionId -> sock
+const sessionState = new Map();     // sessionId -> { connected?:bool, qr?:string }
 
-app.get("/", (req, res) =>
-  res.json({ name: "SEUBOT Baileys Connector", ok: true, version: "1.0.0" })
-);
-
-app.post("/api/sessions/:sessionId/start", async (req, res) => {
-  const { sessionId } = req.params;
-  if (sessions[sessionId]) return res.json({ ok: true, message: "Sessão já ativa" });
-
-  const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${sessionId}`);
-  const sock = makeWASocket({ auth: state, printQRInTerminal: true });
-
-  sock.ev.on("creds.update", saveCreds);
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) console.log(`QR ${sessionId}: ${qr.substring(0, 40)}...`);
-    if (connection === "close") {
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldReconnect) sessions[sessionId] = null;
-    } else if (connection === "open") {
-      sessions[sessionId] = sock;
-      console.log(`✅ Conectado: ${sessionId}`);
-    }
-  });
-
-  sessions[sessionId] = sock;
-  res.json({ ok: true, message: "Sessão iniciada. Veja o QR no log do Render.", sessionId });
+app.get("/", (_, res) => {
+  res.json({ name: "SEUBOT Baileys Connector", ok: true, version: "1.0.0" });
 });
 
+// Iniciar sessão (gera QR e conecta)
+app.post("/api/sessions/:sessionId/start", async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    if (sessions.has(sessionId)) {
+      return res.json({ ok: true, status: "ALREADY_RUNNING", sessionId });
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${sessionId}`);
+
+    const sock = makeWASocket({
+      auth: state,
+      printQRInTerminal: false, // QR iremos expor via API
+      browser: ["SEUBOT", "Chrome", "1.0.0"]
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        sessionState.set(sessionId, { ...sessionState.get(sessionId), qr });
+      }
+
+      if (connection === "open") {
+        sessionState.set(sessionId, { connected: true });
+        console.log(`✅ Conectado: ${sessionId}`);
+      }
+
+      if (connection === "close") {
+        const code = lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = code === DisconnectReason.loggedOut;
+        sessions.delete(sessionId);
+        if (!loggedOut) {
+          // ficará “sem conexão”; app pode chamar /start de novo
+          sessionState.set(sessionId, { connected: false });
+        } else {
+          sessionState.delete(sessionId);
+        }
+      }
+    });
+
+    sessions.set(sessionId, sock);
+    sessionState.set(sessionId, { connected: false });
+    res.json({ ok: true, message: "Sessão iniciada", sessionId });
+  } catch (err) {
+    console.error("start error:", err);
+    res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
+// QR atual (para renderizar no app)
+app.get("/api/sessions/:sessionId/qr", (req, res) => {
+  const { sessionId } = req.params;
+  const st = sessionState.get(sessionId);
+  if (st?.qr) return res.json({ ok: true, qr: st.qr });
+  return res.status(404).json({ ok: false, error: "QR indisponível" });
+});
+
+// Status da sessão
 app.get("/api/sessions/:sessionId/status", (req, res) => {
   const { sessionId } = req.params;
-  const active = !!sessions[sessionId];
-  res.json({ ok: active, status: active ? "CONNECTED" : "DISCONNECTED" });
+  const st = sessionState.get(sessionId);
+  res.json({
+    ok: !!st,
+    connected: !!st?.connected,
+    hasQR: !!st?.qr
+  });
 });
 
-app.delete("/api/sessions/:sessionId", (req, res) => {
-  const { sessionId } = req.params;
-  if (sessions[sessionId]) {
-    sessions[sessionId].end();
-    delete sessions[sessionId];
-  }
-  res.json({ ok: true, message: "Sessão encerrada" });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 SEUBOT rodando na porta ${PORT}`));
-      ok: true,
-      message: "Sessão iniciada com sucesso",
-      sessionId,
-    });
-  } catch (error) {
-    console.error("Erro ao iniciar sessão:", error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// verifica status da sessão
-app.get("/api/sessions/:sessionId/status", async (req, res) => {
-  const sessionId = req.params.sessionId;
-  try {
-    const data = await fetch(sessionId);
-    res.json({ ok: true, data });
-  } catch (err) {
-    res.status(404).json({ ok: false, message: "Sessão não encontrada" });
-  }
-});
-
-// encerra sessão
+// Encerrar sessão (logout)
 app.delete("/api/sessions/:sessionId", async (req, res) => {
-  const sessionId = req.params.sessionId;
   try {
-    const client = await fetch(sessionId);
-    await client.close();
+    const { sessionId } = req.params;
+    const sock = sessions.get(sessionId);
+    if (sock) {
+      await sock.logout();
+      try { sock.end?.(); } catch {}
+      sessions.delete(sessionId);
+    }
+    sessionState.delete(sessionId);
     res.json({ ok: true, message: "Sessão encerrada" });
   } catch (err) {
-    res.status(404).json({ ok: false, message: "Sessão não encontrada" });
+    res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
 });
 
