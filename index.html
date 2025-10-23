@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SEUBOT - Conectar WhatsApp</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 SEUBOT</h1>
+    <p>Conecte seu WhatsApp ao bot</p>
+    <input id="sessionId" placeholder="ID da Sessão (ex: seubot01)" />
+    <button onclick="iniciarSessao()">Iniciar Sessão</button>
+    <div id="qr"></div>
+  </div>
+  <script>
+    async function iniciarSessao() {
+      const sessionId = document.getElementById('sessionId').value.trim();
+      if (!sessionId) return alert('Informe o ID da sessão!');
+      const start = await fetch(`/api/sessions/${sessionId}/start`);
+      const resp = await start.json();
+      if (!resp.ok) return alert('Erro ao iniciar sessão');
+      buscarQR(sessionId);
+    }
+    async function buscarQR(sessionId) {
+      document.getElementById('qr').innerHTML = '<p>Gerando QR...</p>';
+      let tentativas = 0;
+      const timer = setInterval(async () => {
+        const r = await fetch(`/api/sessions/${sessionId}/qr`);
+        const data = await r.json();
+        if (data.ok) {
+          clearInterval(timer);
+          document.getElementById('qr').innerHTML = `<img src="${data.qr}" width="300"/>`;
+        } else if (tentativas++ > 10) {
+          clearInterval(timer);
+          document.getElementById('qr').innerHTML = '<p>QR não gerado. Tente novamente.</p>';
+        }
+      }, 3000);
+    }
+  </script>
+</body>
+</html>
