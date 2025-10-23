@@ -20,17 +20,17 @@ app.get("/api/sessions/:sessionId/start", async (req, res) => {
       useChrome: true,
       debug: false,
       catchQR: (base64Qr, asciiQR) => {
-        console.log("QR gerado para:", sessionId);
+        console.log("✅ QR gerado para:", sessionId);
         sessoes[sessionId] = base64Qr;
       },
       statusFind: (statusSession) => {
-        console.log("Status:", statusSession);
-      }
+        console.log("📡 Status:", statusSession);
+      },
     });
 
     res.json({ ok: true, message: "Sessão iniciada com sucesso" });
   } catch (error) {
-    console.error(error);
+    console.error("❌ Erro ao iniciar sessão:", error);
     res.status(500).json({ ok: false, error: error.message });
   }
 });
@@ -47,4 +47,4 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ SEUBOT rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 SEUBOT rodando na porta ${PORT}`));
